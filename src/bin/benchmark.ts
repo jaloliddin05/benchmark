@@ -1,83 +1,80 @@
-import {fork} from "child_process";
-import {Arguments, Result,Message} from "../types/argument/interface";
-import {IBenchmark} from "../types/Benchmark/interface"
-import {Calculator} from "../utils/helpers/calculate";
+import { fork } from "child_process";
+import { Arguments, Result, Message } from "../types/argument/interface";
+import { IBenchmark } from "../types/Benchmark/interface";
+import { Calculator } from "../utils/helpers/calculate";
 
-export class Benchmark implements IBenchmark{
-     constructor(
-        private command: Arguments,
-        private calculator: Calculator
-    ) {
+export class Benchmark implements IBenchmark {
+  constructor(private command: Arguments, private calculator: Calculator) {}
+
+  public async run(): Promise<{
+    results: Result[];
+    resultsAVG: Result;
+    resultsSTDs: Result[];
+  }> {
+    const results = [];
+    const functionsCollection = require(process.cwd() +
+      "/" +
+      this.command.path);
+    for (let func in functionsCollection) {
+      const testResults = await this.testFunc(
+        functionsCollection[func],
+        functionsCollection[func].name
+      );
+
+      results.push(this.calculator.findAvg(testResults));
     }
 
-    public async run(): Promise<{ results: Result[], resultsAVG: Result, resultsSTDs: Result[] }> {
-        const results = [];
-        const functionsCollection = require(process.cwd() + "/" +this.command.path)
-        for (let func in functionsCollection) {
-            
-            const testResults = await this.testFunc(functionsCollection[func],functionsCollection[func].name);
+    const resultsAVG = this.calculator.findAvg(results);
 
-            results.push(
-                this.calculator.findAvg(testResults)
-            );
-        }
+    const resultsSTDs = this.calculator.findDevision(results, resultsAVG);
 
-        const resultsAVG = this.calculator.findAvg(
-            results
-        );
+    return {
+      results,
+      resultsAVG,
+      resultsSTDs,
+    };
+  }
 
-        const resultsSTDs = this.calculator.findDevision(
-            results,
-            resultsAVG
-        );
+  private async testFunc(func: Function, funcName: string): Promise<Result[]> {
+    let results = [];
 
-        return {
-            results,
-            resultsAVG,
-            resultsSTDs
-        };
+    for (let i = 0; i < this.command.runsCount; i++) {
+      const message: Message = {
+        func: func.toString(),
+        iterations: this.command.iterationsCount,
+        funcName,
+        runsCount: this.command.runsCount,
+      };
+
+      try {
+        const result = await this.getResult(message);
+        results.push(result);
+      } catch (error) {
+        console.log(error);
+      }
     }
 
-    private async testFunc(func: Function,funcName:string): Promise<Result[]> {
-        let results = [];
+    return results;
+  }
 
-        for (let i = 0; i < this.command.runsCount; i++) {
-            const message: Message = {
-                func: func.toString(),
-                iterations: this.command.iterationsCount,
-                funcName,
-                runsCount:this.command.runsCount
-            };
+  private async getResult(message: Message): Promise<Result> {
+    const myChild = fork(__dirname + "/../lib/process/runProcess");
 
-            try {
-                const result = await this.getResult(message);
-                results.push(result);
-            } catch (error) {
-                console.log(error);
-            }
-        }
+    return new Promise((resolve, reject) => {
+      myChild.on("error", (error) => {
+        reject(error);
+      });
 
-        return results;
-    }
+      myChild.on("close", (error) => {
+        reject(error);
+      });
 
-    private async getResult(message: Message): Promise<Result> {
-        const myChild = fork(__dirname + "/../lib/process/runProcess");
+      myChild.on("message", (result: Result) => {
+        resolve(result);
+        myChild.kill();
+      });
 
-        return new Promise((resolve, reject) => {
-            myChild.on("error", (error) => {
-                reject(error);
-            })
-
-            myChild.on("close", (error) => {
-                reject(error);
-            });
-
-            myChild.on("message", (result: Result) => {
-                resolve(result);
-                myChild.kill();
-            });
-
-            myChild.send(message);
-        });
-    }
+      myChild.send(message);
+    });
+  }
 }
